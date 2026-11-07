@@ -1,0 +1,15 @@
+{
+  "sender_batch_header": {
+    "sender_batch_id": "test-batch-002",
+    "email_subject": "Test bill payment"
+  },
+  "items": [
+    {
+      "recipient_type": "EMAIL",
+      "amount": { "value": "10.00", "currency": "USD" },
+      "receiver": "sb-r4dek53766541@personal.example.com",
+      "note": "Test payout",
+      "sender_item_id": "item-002"
+    }
+  ]
+}
