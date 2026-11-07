@@ -216,3 +216,12 @@ def summary(conn, cycle_id):
         "locker_balance_cents": locker_balance(conn, cycle_id),
         "payments": [dict(p) for p in payments],
     }
+
+def payments_with_status(conn, cycle_id, *statuses):
+    """Payments in a cycle whose status is one of the given statuses."""
+    marks = ",".join("?" * len(statuses))
+    return conn.execute(
+        "SELECT bill_id, payout_id, amount_cents, batch_id FROM payments "
+        f"WHERE cycle_id = ? AND status IN ({marks}) ORDER BY id",
+        (cycle_id, *statuses),
+    ).fetchall()
