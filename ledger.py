@@ -5,6 +5,8 @@ Payment life cycle: LOCKED -> RESERVED -> PENDING -> SUCCESS
                     (a rejected payment becomes FAILED and can be retried)
 """
 import sqlite3
+import calendar
+from datetime import date
 
 DB_PATH = "locker.db"
 
@@ -34,12 +36,16 @@ def init_db(conn):
             amount_cents INTEGER NOT NULL CHECK (amount_cents > 0),
             payee_email TEXT NOT NULL,
             frequency TEXT NOT NULL DEFAULT 'monthly'
-                CHECK (frequency IN ('monthly', 'yearly', 'one_time'))
+                CHECK (frequency IN ('monthly', 'yearly', 'one_time')),
+            due_day INTEGER NOT NULL DEFAULT 1 CHECK (due_day BETWEEN 1 AND 31),
+            due_date TEXT
         );
         CREATE TABLE IF NOT EXISTS cycles (
             cycle_id TEXT PRIMARY KEY,
             salary_cents INTEGER NOT NULL CHECK (salary_cents >= 0),
-            locked_cents INTEGER NOT NULL CHECK (locked_cents >= 0)
+            locked_cents INTEGER NOT NULL CHECK (locked_cents >= 0),
+            start_date TEXT,
+            end_date TEXT
         );
         CREATE TABLE IF NOT EXISTS payments (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -50,6 +56,7 @@ def init_db(conn):
             attempts INTEGER NOT NULL DEFAULT 1,
             batch_id TEXT NOT NULL,
             payout_id TEXT,
+            due_date TEXT,
             updated_at TEXT NOT NULL DEFAULT (datetime('now')),
             UNIQUE (cycle_id, bill_id)
         );
@@ -73,12 +80,15 @@ def _log(conn, cycle_id, kind, amount_cents=None, note=None):
     )
 
 
-def add_bill(conn, name, amount_cents, payee_email, frequency="monthly"):
+def add_bill(conn, name, amount_cents, payee_email, frequency="monthly",
+             due_day=1, due_date=None):
+    if frequency in ("yearly", "one_time") and not due_date:
+        raise ValueError(f"{frequency} bills need a due_date")
     with conn:
         cursor = conn.execute(
-            "INSERT INTO bills (name, amount_cents, payee_email, frequency) "
-            "VALUES (?, ?, ?, ?)",
-            (name, amount_cents, payee_email, frequency),
+            "INSERT INTO bills (name, amount_cents, payee_email, frequency, due_day, due_date) "
+            "VALUES (?, ?, ?, ?, ?, ?)",
+            (name, amount_cents, payee_email, frequency, due_day, due_date),
         )
     return cursor.lastrowid
 
@@ -100,10 +110,26 @@ def get_cycle(conn, cycle_id):
     return row
 
 
-def start_cycle(conn, cycle_id, salary_cents):
-    """Lock every monthly bill from the salary. Returns the total locked."""
-    bills = list_bills(conn, "monthly")
-    total = sum(bill["amount_cents"] for bill in bills)
+def start_cycle(conn, cycle_id, salary_cents, start_date=None, end_date=None):
+    """Lock the bills due in the window, or every monthly bill if no dates are given."""
+    locked = []  # pairs of (bill, due date as text)
+    if start_date is None:
+        for bill in list_bills(conn, "monthly"):
+            locked.append((bill, None))
+    else:
+        start, end = date.fromisoformat(start_date), date.fromisoformat(end_date)
+        if end < start:
+            raise LedgerError("End date is before the start date")
+        if (end - start).days + 1 > 31:
+            raise LedgerError("A cycle window can be at most 31 days")
+        for bill in list_bills(conn):
+            dates = due_dates_in_window(
+                bill["frequency"], bill["due_day"], bill["due_date"], start, end
+            )
+            if dates:
+                locked.append((bill, dates[0].isoformat()))
+
+    total = sum(bill["amount_cents"] for bill, _ in locked)
     if total > salary_cents:
         raise LedgerError(
             f"Shortfall: bills total {dollars(total)} but salary is {dollars(salary_cents)}"
@@ -111,19 +137,19 @@ def start_cycle(conn, cycle_id, salary_cents):
     try:
         with conn:
             conn.execute(
-                "INSERT INTO cycles (cycle_id, salary_cents, locked_cents) "
-                "VALUES (?, ?, ?)",
-                (cycle_id, salary_cents, total),
+                "INSERT INTO cycles (cycle_id, salary_cents, locked_cents, start_date, end_date) "
+                "VALUES (?, ?, ?, ?, ?)",
+                (cycle_id, salary_cents, total, start_date, end_date),
             )
-            for bill in bills:
+            for bill, due in locked:
                 conn.execute(
-                    "INSERT INTO payments (cycle_id, bill_id, amount_cents, batch_id) "
-                    "VALUES (?, ?, ?, ?)",
+                    "INSERT INTO payments (cycle_id, bill_id, amount_cents, batch_id, due_date) "
+                    "VALUES (?, ?, ?, ?, ?)",
                     (cycle_id, bill["id"], bill["amount_cents"],
-                     f"{cycle_id}-bill{bill['id']}-a1"),
+                     f"{cycle_id}-bill{bill['id']}-a1", due),
                 )
             _log(conn, cycle_id, "salary_received", salary_cents)
-            _log(conn, cycle_id, "bills_locked", total, f"{len(bills)} bills")
+            _log(conn, cycle_id, "bills_locked", total, f"{len(locked)} bills")
     except sqlite3.IntegrityError:
         raise LedgerError(f"Cycle {cycle_id} has already been started")
     return total
@@ -204,7 +230,7 @@ def mark_payment(conn, cycle_id, bill_id, status, payout_id=None):
 def summary(conn, cycle_id):
     cycle = get_cycle(conn, cycle_id)
     payments = conn.execute(
-        "SELECT b.name, p.amount_cents, p.status FROM payments p "
+        "SELECT b.name, p.amount_cents, p.status , p.due_date FROM payments p "
         "JOIN bills b ON b.id = p.bill_id WHERE p.cycle_id = ? ORDER BY p.id",
         (cycle_id,),
     ).fetchall()
@@ -224,4 +250,55 @@ def payments_with_status(conn, cycle_id, *statuses):
         "SELECT bill_id, payout_id, amount_cents, batch_id FROM payments "
         f"WHERE cycle_id = ? AND status IN ({marks}) ORDER BY id",
         (cycle_id, *statuses),
+    ).fetchall()
+
+
+
+def due_dates_in_window(frequency, due_day, due_date, start, end):
+    """Return a sorted list of date objects inside [start, end] when a bill is due.
+
+    monthly: due_day of every month the window touches (use the last day if short)
+    yearly or one_time: due_date, a 'YYYY-MM-DD' string, if it falls in the window
+    """
+    if frequency in ("yearly", "one_time"):
+        when = date.fromisoformat(due_date)
+        return [when] if start <= when <= end else []      # GAP 1: must RETURN
+
+    dates = []
+    year, month = start.year, start.month
+    while (year, month) <= (end.year, end.month):
+        last_day = calendar.monthrange(year, month)[1]
+        candidate = date(year, month, min(due_day, last_day))
+        if start <= candidate <= end:
+            dates.append(candidate)
+        month += 1                                          # GAP 2: inside the while loop
+        if month == 13:
+            month = 1
+            year += 1
+    return dates
+
+def yearly_set_aside_cents(conn):
+    rows = conn.execute(
+        "SELECT amount_cents FROM bills WHERE frequency = 'yearly'"
+    ).fetchall()
+    return sum(-(-row["amount_cents"] // 12) for row in rows)
+
+def list_payments(conn, cycle_id):
+    return conn.execute(
+        "SELECT p.bill_id, b.name, b.payee_email, b.frequency, p.amount_cents, "
+        "p.status, p.attempts, p.batch_id, p.payout_id, p.due_date "
+        "FROM payments p JOIN bills b ON b.id = p.bill_id "
+        "WHERE p.cycle_id = ? ORDER BY p.due_date, p.id",
+        (cycle_id,),
+    ).fetchall()
+
+
+def list_events(conn, cycle_id=None, limit=100):
+    if cycle_id:
+        return conn.execute(
+            "SELECT * FROM events WHERE cycle_id = ? ORDER BY id DESC LIMIT ?",
+            (cycle_id, limit),
+        ).fetchall()
+    return conn.execute(
+        "SELECT * FROM events ORDER BY id DESC LIMIT ?", (limit,)
     ).fetchall()
