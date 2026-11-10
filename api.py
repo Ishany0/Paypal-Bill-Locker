@@ -1,6 +1,7 @@
 """Flask API: exposes the ledger, guardrail and executor as JSON."""
 import os
 from dataclasses import asdict
+import agents
 
 from flask import Flask, g, jsonify, request
 from flask_cors import CORS
@@ -123,6 +124,30 @@ def create_app(db_path=None):
     def refresh(cycle_id):
         changed = executor.refresh_statuses(get_db(), cycle_id)
         return jsonify([{"bill_id": b, "status": s} for b, s in changed])
+
+    @app.errorhandler(agents.AgentError)
+    def agent_failed(error):
+        return jsonify(error=str(error)), 503
+
+    @app.post("/api/agents/intake")
+    def agent_intake():
+        text = (request.get_json(force=True).get("text") or "").strip()
+        if not text:
+            raise ValueError("Type a sentence describing the bill")
+        payee = os.getenv("TEST_RECIPIENT_EMAIL", "")
+        return jsonify(agents.intake_agent(text, payee))
+
+    @app.get("/api/cycles/<cycle_id>/agents/briefing")
+    def agent_briefing(cycle_id):
+        return jsonify(agents.run_briefing(get_db(), cycle_id))
+
+    @app.get("/api/cycles/<cycle_id>/agents/reminders")
+    def agent_reminders(cycle_id):
+        return jsonify(agents.run_reminders(get_db(), cycle_id))
+
+    @app.get("/api/cycles/<cycle_id>/agents/reconcile")
+    def agent_reconcile(cycle_id):
+        return jsonify(agents.run_reconcile(get_db(), cycle_id))
 
     return app
 

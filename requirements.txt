@@ -3,3 +3,4 @@ python-dotenv
 pytest
 flask
 flask-cors
+openai

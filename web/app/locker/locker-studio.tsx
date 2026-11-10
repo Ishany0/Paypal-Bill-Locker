@@ -4,9 +4,12 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { AgStudio, AgStudioProvider } from 'ag-studio-react';
 import { initialState } from './locker-state';
 import LockerActions from './locker-actions';
+import LockerAssistants from './locker-assistants';
 
 const API = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:5000';
 const LICENSE_KEY = process.env.NEXT_PUBLIC_AG_STUDIO_LICENSE_KEY;
+const [tab, setTab] = useState<'bills' | 'ai'>('bills');
+const [cycleVersion, setCycleVersion] = useState(0);
 
 type Row = Record<string, unknown>;
 type Source = { id: string; data: Row[] };
@@ -102,7 +105,7 @@ export default function LockerStudio() {
   );
 
    return (
-     <div>
+    <div>
       <div style={{ display: 'flex', gap: 8, padding: 8, justifyContent: 'flex-end' }}>
         <button onClick={load}>Refresh data</button>
         <button onClick={copyState}>Copy dashboard state</button>
@@ -118,7 +121,33 @@ export default function LockerStudio() {
             studio
           )}
         </div>
-        <LockerActions onChanged={load} />
+        <div
+          style={{
+            width: 360,
+            display: 'flex',
+            flexDirection: 'column',
+            borderLeft: '1px solid #ddd',
+          }}
+        >
+          <div style={{ display: 'flex', gap: 4, padding: 8 }}>
+            <button disabled={tab === 'bills'} onClick={() => setTab('bills')}>
+              Bills
+            </button>
+            <button disabled={tab === 'ai'} onClick={() => setTab('ai')}>
+              AI assistants
+            </button>
+          </div>
+          <div style={{ flex: 1, minHeight: 0, overflowY: 'auto' }}>
+            {tab === 'bills' ? (
+              <LockerActions key={cycleVersion} onChanged={load} />
+            ) : (
+              <LockerAssistants
+                onChanged={load}
+                onNewCycle={() => setCycleVersion((v) => v + 1)}
+              />
+            )}
+          </div>
+        </div>
       </div>
     </div>
   );
