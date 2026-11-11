@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useState } from 'react';
 
-const API = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:5000';
+const API = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:5001';
 const JSON_HEADERS = { 'Content-Type': 'application/json' };
 
 type Cycle = { cycle_id: string; salary_cents: number };

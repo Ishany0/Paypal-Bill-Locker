@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useState } from 'react';
 
-const API = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:5000';
+const API = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:5001';
 
 type Payment = {
   bill_id: number;
@@ -50,12 +50,14 @@ export default function LockerActions({ onChanged }: { onChanged: () => void }) 
   const run = useCallback(
     async (action: () => Promise<void>) => {
       setBusy(true);
+      let failure: string | null = null;
       try {
         await action();
       } catch (e) {
-        setError(e instanceof Error ? e.message : String(e));
+        failure = e instanceof Error ? e.message : String(e);
       }
       await reload();
+      if (failure) setError(failure);
       onChanged();
       setBusy(false);
     },

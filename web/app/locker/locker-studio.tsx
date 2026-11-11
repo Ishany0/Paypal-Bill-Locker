@@ -6,10 +6,8 @@ import { initialState } from './locker-state';
 import LockerActions from './locker-actions';
 import LockerAssistants from './locker-assistants';
 
-const API = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:5000';
+const API = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:5001';
 const LICENSE_KEY = process.env.NEXT_PUBLIC_AG_STUDIO_LICENSE_KEY;
-const [tab, setTab] = useState<'bills' | 'ai'>('bills');
-const [cycleVersion, setCycleVersion] = useState(0);
 
 type Row = Record<string, unknown>;
 type Source = { id: string; data: Row[] };
@@ -65,6 +63,8 @@ export default function LockerStudio() {
   const [sources, setSources] = useState<Source[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [mode, setMode] = useState<'view' | 'edit'>('edit');
+  const [tab, setTab] = useState<'bills' | 'ai'>('bills');
+  const [cycleVersion, setCycleVersion] = useState(0);
   const latestState = useRef<unknown>(null);
 
   const load = useCallback(() => {
@@ -96,7 +96,7 @@ export default function LockerStudio() {
   if (!data) return <p style={{ padding: 24 }}>Loading...</p>;
 
   const studio = (
-    <AgStudio
+      <AgStudio
       data={data}
       mode={mode}
       initialState={initialState}

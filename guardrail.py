@@ -6,7 +6,7 @@ ALLOWED, needs a person's APPROVAL, or is REFUSED. Every decision is logged.
 import re
 from dataclasses import dataclass
 
-from ledger import dollars
+from ledger import dollars , LedgerError
 
 ALLOWED = "ALLOWED"
 NEEDS_APPROVAL = "NEEDS_APPROVAL"
@@ -54,6 +54,11 @@ def init_guardrail(conn):
 
 def approve_payment(conn, cycle_id, bill_id, approved_by="user"):
     """Record a person's approval. Only the user interface should call this."""
+    exists = conn.execute(
+        "SELECT 1 FROM payments WHERE cycle_id = ? AND bill_id = ?", (cycle_id, bill_id)
+    ).fetchone()
+    if exists is None:
+        raise LedgerError(f"Bill {bill_id} is not locked for cycle {cycle_id}")
     with conn:
         conn.execute(
             "INSERT OR IGNORE INTO approvals (cycle_id, bill_id, approved_by) "

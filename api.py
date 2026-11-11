@@ -2,6 +2,7 @@
 import os
 from dataclasses import asdict
 import agents
+import sqlite3
 
 from flask import Flask, g, jsonify, request
 from flask_cors import CORS
@@ -42,6 +43,10 @@ def create_app(db_path=None):
     def bad_request(error):
         return jsonify(error=str(error)), 400
 
+    @app.errorhandler(sqlite3.IntegrityError)
+    def rejected_by_database(error):
+        return jsonify(error=f"The database rejected this: {error}"), 400
+
     @app.errorhandler(KeyError)
     def missing_field(error):
         return jsonify(error=f"Missing field: {error}"), 400
@@ -49,6 +54,14 @@ def create_app(db_path=None):
     @app.get("/api/health")
     def health():
         return jsonify(status="ok")
+
+    @app.get("/")
+    def index():
+        return jsonify(
+            name="Bill Locker API",
+            health="/api/health",
+            dashboard="Open http://localhost:3000/locker",
+        )
 
     @app.get("/api/bills")
     def bills():
@@ -153,4 +166,5 @@ def create_app(db_path=None):
 
 
 if __name__ == "__main__":
-    create_app().run(port=5001, debug=True)
+    create_app().run(port=int(os.getenv("PORT", "5001")),
+                    debug=os.getenv("FLASK_DEBUG") == "1")

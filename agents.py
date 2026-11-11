@@ -65,6 +65,12 @@ def ask(system, payload, max_tokens=700, client=None):
         raise AgentError(f"AI provider error: {error}")
     return parse_json(response.choices[0].message.content or "")
 
+def _need(answer, key, kind):
+    value = answer.get(key)
+    if not isinstance(value, kind):
+        raise AgentError(f"The agent's answer is missing '{key}'")
+    return value
+
 
 # ---------------------------------------------------------------- Intake agent
 
